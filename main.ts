@@ -1,46 +1,52 @@
 /**
- * BTC swing bot v3 for make.fun btc-race-24h (bars-replay/v1).
+ * BTC washout bot v4 for make.fun btc-race-24h (bars-replay/v1).
  *
- * Successor to v2 (commit e7604fe, dev +$17.93, 11-window total +$12.75).
- * v3 changes exactly ONE parameter: take-profit 1.6% -> 1.8%.
+ * Successor to v3 (commit deaa490, dev +$21.00 on the 0603 window, but
+ * $0.00 / 0 trades on the 1444 window — it FAILS this race's dev gate).
  *
- * Why: the top-10 analysis said the winners buy a deep washout and hold
- * until the rebound finishes (+2.0-2.5%), and that v2's TP (+1.6%) cut
- * winners short. We tested that prescription on the same 11 windows
- * (DIP 70-200 x TP 160/200/250, plus a fine TP scan 160-200):
- *   - The DEEP-DIP half of the prescription FAILED empirically. DIP 75
- *     already kills the dev trades entirely (dev $0.00); DIP 100 keeps
- *     only the one losing W8 trade (total -$5.17); DIP >= 125 trades
- *     NOWHERE in any of the 11 windows (total $0.00, 0 trades). A
- *     washout bot cannot pass the dev gate on this data, so DIP stays 70.
- *   - The BIGGER-TP half works, but only up to a point: TP 165-190 form
- *     a plateau (totals +$14.22 to +$16.89, worst -$5.17, max DD 0.83%,
- *     dev +$19.39 to +$22.06, same 6 trades as v2). TP 195/200 fall off
- *     a cliff (total +$9.61) because the second dev trade then misses
- *     its TP and gets banked by the trailing stop for only +$3.62.
- *     TP 250 is worse still (total +$2.54, max DD 1.01%).
- *   - TP 180 is the middle of the 165-190 plateau and reproduces the
- *     +$15.82 total v2's own report already measured at TP 180.
- * The gain (+$3.07 over v2) comes entirely from the same two dev
- * round-trips held a few bars longer (sell bars 512 vs 510 and 960 vs
- * 936); 9 of 11 windows are byte-identical to v2. This is NOT a washout
- * bot and will not win a washout race the way the top 10 did ($14-31 in
- * one window) - it banks slightly more on the same dev-type bounce while
- * keeping v2's downside bound (worst -$5.17, max DD 0.83%).
+ * v4 is a TRUE washout bot, built on a different architecture. The top-10
+ * analysis found the live winners buy ONE deep washout (~4.5% down) and
+ * hold to a +2.0-2.5% rebound, 1-2 trades, exposure <= 0.15. v3 could not
+ * do that: its dip is measured vs SMA-90, and in a falling window the SMA
+ * itself falls with the price, so the dip never looks deep enough — and
+ * the SMA not-falling filters block the deeper dips outright. Raising
+ * v3's DIP to 75 already killed its dev trades entirely.
  *
- * Everything else is v2 unchanged: confirmed-dip entry (close >= 0.70%
- * below the 90-bar average AND two consecutive up closes), SMA-200
- * not-falling filter, SL -2.0%, trailing stop 1.1% from peak, 60% size.
+ * v4 measures the dip vs a ROLLING HIGH instead of a moving average. A
+ * high is a fixed anchor: it does not fall with the price, so a -2.0%
+ * drawdown from the high DOES fire in a falling knife. The reversal
+ * confirmation (this close above the previous close) keeps the bot from
+ * buying mid-fall — that is the exact failure that lost v1's live race.
+ *
+ * Parameters (swept on the two authoritative dev windows, 1,728 combos;
+ * the pick sits on a plateau, not a peak — see REPORT.md):
+ *   rolling high window 240 bars (4h), entry -2.0% below the high,
+ *   confirmation one up close, TP +1.8% over cost, trailing 1.1% from
+ *   peak value, hard SL -2.0% under cost, size 60% of cash, MAX 1 trade
+ *   per 24h (no re-entry after exit).
+ *
+ * Backtest (independent backtester that reproduces the kit grader
+ * bit-for-bit on v1/v2/v3):
+ *   1444 dev (this race): +$10.26, 1 round trip, 100% win, 0.39% max DD.
+ *     buys bar 241 ~$63,749 (the washout bottom) -> sells bar 503
+ *     ~$64,892 (the rebound high). The washout trade, exactly as the
+ *     top 10 make it.
+ *   0603 dev (previous race): +$10.82, 1 round trip, 100% win, 0.37% max DD.
+ *   Total across both dev windows: +$21.08 (v3: +$21.00 — and v3 scores
+ *   $0.00 on the 1444 window, so it cannot race here at all).
+ *   12-window total (both dev + 10 Coinbase proxies): +$16.02, worst
+ *   -$5.81 (v3: +$15.82, worst -$5.17, positive on only 1 of 12).
+ *
+ * Honest limitation: one trade cannot match v3's TWO winning round trips
+ * on the flat 0603 window (+$21.00 there); v4 makes +$10.82 on it. That
+ * is structural — a 1-trade, 60%-size bot cannot print +$21 on a window
+ * whose biggest single move is ~2%. v4 wins where it matters for THIS
+ * race (it passes the 1444 gate; v3 fails it) and is positive on both
+ * dev windows, while v3 is flat on one of them.
  *
  * All arithmetic is BigInt (closes, sums and values are integers), so the
  * same bars always give the same orders. No clock, no network, no files, no
  * randomness.
- *
- * Multi-window backtest (11 x 24h windows, independent backtester that
- * reproduces the kit grader bit-for-bit on v1: +$25.50 dev):
- * net +$15.82 across all 11 windows (mean +$1.44/window), worst window
- * -$5.17, dev +$21.00 (4 trades, 2/2 wins, 0.40% max drawdown).
- * v2 on the same windows: net +$12.75, worst -$5.17, dev +$17.93.
  */
 
 import { runBars } from './vendor/makefun-bars.ts';
@@ -49,15 +55,13 @@ import type { BarsState, Batch, OrderInput } from './vendor/makefun-bars.ts';
 const SYMBOL = 'CBBTC';
 
 // Strategy parameters (see REPORT.md for how they were chosen).
-const SLOW_BARS = 90; // slow average window (bars)
-const LONG_BARS = 200; // long average window (bars)
-const DIP_BPS = 70n; // buy when close is this many bps below the slow average
-const TP_BPS = 180n; // sell when the position is this many bps over its cost (v3: 180, was 160 in v2 — mid-plateau of the 165-190 TP scan; see REPORT.md)
+const HIGH_BARS = 240; // rolling-high window (bars)
+const DD_BPS = 200n; // buy when close is this many bps below the rolling high
+const TP_BPS = 180n; // sell when the position is this many bps over its cost
 const STOP_BPS = 200n; // sell when the position is this many bps under its cost
 const TRAIL_BPS = 110n; // sell when the position falls this many bps from its peak value
 const SIZE_BPS = 6000n; // buy with this many bps of cash (60%), not all-in
-const REGIME_BPS = 10n; // an average must be within this many bps of the close
-// that many bars ago (i.e. not falling)
+const MAX_TRADES = 1; // at most one round trip per 24h window
 const MAX_SLIPPAGE_BPS = 100; // 1% past the close the order was decided on
 const BPS = 10_000n;
 
@@ -65,11 +69,16 @@ const BPS = 10_000n;
 const closes: bigint[] = [];
 // Peak value of the open position (quote units); 0 while flat.
 let peakValue = 0n;
+// Round trips completed; the bot never re-enters after its one trade.
+let tradesDone = 0;
 
-function sumLast(n: number): bigint {
-  let total = 0n;
-  for (let k = closes.length - n; k < closes.length; k++) total += closes[k];
-  return total;
+function rollingHigh(): bigint {
+  let high = 0n;
+  const start = closes.length - HIGH_BARS;
+  for (let k = start; k < closes.length; k++) {
+    if (closes[k] > high) high = closes[k];
+  }
+  return high;
 }
 
 function onBatch(state: BarsState, batch: Batch): OrderInput[] {
@@ -81,32 +90,24 @@ function onBatch(state: BarsState, batch: Batch): OrderInput[] {
 
   const held = state.positions.get(SYMBOL);
   if (held === undefined) {
-    // Flat: look for a confirmed dip to buy.
+    // Flat: look for a washout to buy — at most one trade per window.
     peakValue = 0n;
-    // Need a full long window plus one older close for the regime check.
-    if (closes.length < LONG_BARS + 2) return [];
+    if (tradesDone >= MAX_TRADES) return [];
+    // Need a full high window plus one older close for the confirmation.
+    if (closes.length < HIGH_BARS + 2) return [];
     const close = closes[closes.length - 1];
-    // Dip: close at least DIP_BPS below the slow average.
-    //   close * SLOW_BARS * 10000 < totalSlow * (10000 - DIP_BPS)
-    const totalSlow = sumLast(SLOW_BARS);
-    if (close * BigInt(SLOW_BARS) * BPS >= totalSlow * (BPS - DIP_BPS)) return [];
-    // Regime: slow average not falling: average >= close 91 bars ago
-    // (within 0.1%).
-    const oldSlow = closes[closes.length - SLOW_BARS - 2];
-    if (totalSlow * BPS < oldSlow * (BPS - REGIME_BPS) * BigInt(SLOW_BARS)) return [];
-    // Long regime: long average not falling: average >= close 200 bars
-    // ago (within 0.1%).
-    const totalLong = sumLast(LONG_BARS);
-    const oldLong = closes[closes.length - LONG_BARS - 1];
-    if (totalLong * BPS < oldLong * (BPS - REGIME_BPS) * BigInt(LONG_BARS)) return [];
-    // Confirmation: the turn must be real — the last two closes both up.
-    // (A single down bar that merely "looks cheap" is a falling knife:
-    // that is exactly the trade that lost the live race for v1.)
+    // Drawdown: close at least DD_BPS below the rolling high.
+    //   close * 10000 <= high * (10000 - DD_BPS)
+    const high = rollingHigh();
+    if (close * BPS > high * (BPS - DD_BPS)) return [];
+    // Confirmation: the turn must be real — this close above the last.
+    // (Buying while still falling is catching a knife: that is exactly
+    // the trade that lost the live race for v1.)
     if (close <= closes[closes.length - 2]) return [];
-    if (closes[closes.length - 2] <= closes[closes.length - 3]) return [];
     const cash = state.cash;
     const notional = (cash * SIZE_BPS) / BPS;
     if (notional < BigInt(state.hello.fees.min_notional_quote_units)) return [];
+    tradesDone += 1;
     return [
       {
         side: 'buy',

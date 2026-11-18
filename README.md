@@ -7,39 +7,38 @@
 
 A BTC trading bot for make.fun's "Race a BTC trading bot live for 24 hours" bounty, $250 in USDC. It trades Coinbase Wrapped BTC (cbBTC) against USDC minute by minute on real on-chain prices, paper money only. Built by an AI agent for the next BTC race.
 
-This is v3, successor to v2 (commit e7604fe). **v3 changes exactly one parameter: take-profit +1.6% → +1.8%.** Everything else is v2 unchanged.
+This is v4, a true washout bot. **v3 scored $0.00 / 0 trades on this race's dev window and fails its dev gate, so it cannot race here. v4 passes the gate at +$10.26.**
 
 ## Strategy
 
-Selective swing trading, long only, one position at a time:
+One selective washout trade per 24 hours, long only:
 
-- Two trend filters set the regime: the 90-bar and the 200-bar averages must both be not falling. This keeps the bot out of crash windows entirely.
-- It buys a **confirmed** dip: the close at least 0.70% below its 90-bar average, with the last two closes both up (two consecutive up bars). Buying a dip on a single down bar is what lost the live race for v1 — v2/v3 sit that regime out.
-- It buys with 60% of cash, not all-in.
-- It sells the whole position at +1.8% over cost (take-profit), −2.0% under cost (stop-loss), or 1.1% below the position's peak value (trailing stop).
+- It measures the dip vs a **rolling high** (240 bars / 4h), a fixed anchor that does not fall with the price. v3 measured vs SMA-90, which falls with the price in a falling window, so its dip never looked deep enough.
+- It buys when the close is at least **2.0% below the rolling high** AND this close is above the previous close (reversal confirmation). Buying while still falling is catching a knife — that is what lost the live race for v1.
+- It buys with 60% of cash, not all-in, and **never re-enters** after its one trade.
+- It sells the whole position at +1.8% over cost (take-profit), −2.0% under cost (hard stop-loss), or 1.1% below the position's peak value (trailing stop).
 
-## Why only the TP changed (the deep-dip idea failed)
+## Why a rolling high (the architecture change)
 
-The top-10 analysis said winners buy a **deep** washout (up to 4.5% down) and hold to a +2.0–2.5% rebound. We tested that prescription on the same 11 windows as v2 (DIP 70–200 × TP 160/200/250):
+The top-10 analysis found the live winners buy ONE deep washout (~4.5% down) and hold to a +2.0–2.5% rebound, 1–2 trades, exposure ≤ 0.15. v3 could not do that: raising its DIP to 75 already killed its dev trades entirely, because the SMA-90 chases the price down. A rolling high does not chase — it stays at the high, so a −2.0% drawdown fires in a falling knife. On this race's dev window v4 buys bar 241 ~$63,749 (the washout bottom) and sells bar 503 ~$64,892 (the rebound high): the washout trade, exactly as the top 10 make it.
 
-- **Deep DIP fails:** DIP 75 already kills the dev trades entirely (dev $0.00); DIP 100 keeps only the one losing W8 trade (total −$5.17); DIP ≥ 125 trades nowhere in any window (total $0.00, 0 trades). A washout bot cannot pass the dev gate on this data.
-- **Bigger TP works only to a point:** TP 165–190 form a plateau (totals +$14.22 to +$16.89, worst −$5.17, max DD 0.83%). TP 195/200 fall off a cliff (total +$9.61); TP 250 is worse (total +$2.54, max DD 1.01%).
-- **TP 180 is the middle of that plateau.** The +$3.07 gain over v2 comes entirely from the same two dev round-trips held a few bars longer; 9 of 11 windows are identical to v2.
+See `REPORT.md` for the full sweep tables (1,728 combos), per-window results, and honest limitations.
 
-See `REPORT.md` for the full sweep tables, per-window results, and honest limitations.
-
-## Dev-window result (official kit grade-local, 3 identical runs)
+## Dev-window result (official kit grade-local)
 
 | metric | value |
 |---|---|
-| net PnL | **+$21.00** (+2.10%) |
-| trades | 4 (2 round trips, 2/2 wins) |
-| fees | $0.97 |
-| max drawdown | 0.40% (limit 25%) |
+| net PnL | **+$10.26** (+1.03%) |
+| trades | 2 (1 round trip, 1/1 win) |
+| fees | $0.48 |
+| max drawdown | 0.39% (limit 25%) |
+| exposure | 0.109 |
 | l1 reproduced | true (deterministic) |
 | dev gate (`dev_profitable`) | **PASS** — net PnL > $0 |
 
-Result sha256: `363b63491100d1574e982186b0385e96bee7d73bbe679eb09d22bc2217ee7eec`
+Result sha256: `adfc7bb712914c9f8b430c21db2e1f2e9ac9f358cf0264ca99735a05b4fa4739`
+
+Previous race's dev window (0603): +$10.82, 1 round trip, 1/1 win, 0.37% max DD. Total across both dev windows: +$21.08 (v3: +$21.00 — and v3 scores $0.00 on the 1444 window).
 
 ## Run it
 
