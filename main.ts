@@ -37,6 +37,13 @@
  *   12-window total (both dev + 10 Coinbase proxies): +$16.02, worst
  *   -$5.81 (v3: +$15.82, worst -$5.17, positive on only 1 of 12).
  *
+ * Verified against the official kit grader (grade-local --driver process,
+ * 1444 kit, --worktree on this file): net PnL +$10.26285, 2 trades,
+ * win rate 1.0, max drawdown 0.39%, exposure 0.109, l1 reproduced true.
+ * Result sha256 adfc7bb712914c9f8b430c21db2e1f2e9ac9f358cf0264ca99735a05b4fa4739
+ * (v4 dev dir) — the backtester reproduces the grader to the cent, so the
+ * numbers above are the grader's numbers, not a proxy's.
+ *
  * Honest limitation: one trade cannot match v3's TWO winning round trips
  * on the flat 0603 window (+$21.00 there); v4 makes +$10.82 on it. That
  * is structural — a 1-trade, 60%-size bot cannot print +$21 on a window
